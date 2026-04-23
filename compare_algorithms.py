@@ -6,9 +6,9 @@ from scipy.spatial.distance import pdist
 from problemas import NKLandscape, QUBO
 from RefSetMethods import ReferenceSet
 from LocalSearchMethods import LocalSearchImprovement, LocalSearch_BitFlipMutation
-from CombinationMethods import PymooCrossoverCombination, ExhaustiveSubsetGeneration, TournamentSubsetGeneration2
-from population import FrequencyBinaryDiversification
-from ScatterSearch import ScatterSearch
+from CombinationMethods import PymooCrossoverCombination, ExhaustiveSubsetGeneration, TournamentSubsetGeneration2, BinaryTournamentSubsetGeneration
+from population import FrequencyBinaryDiversification, FrequencyBinaryDiversification2
+from ParallelScatterSearch import ScatterSearch
 
 
 from pymoo.algorithms.soo.nonconvex.ga import GA
@@ -18,6 +18,33 @@ from pymoo.operators.sampling.rnd import BinaryRandomSampling
 from pymoo.operators.mutation.bitflip import BitflipMutation
 from pymoo.optimize import minimize
 from pymoo.core.callback import Callback
+
+def get_stagnation_stats(all_fitness, all_evals=None, pop_size=100):
+    stagnation_gens = []
+    stagnation_evals = []
+    
+    for i, run in enumerate(all_fitness):
+        # Encontramos el mejor fitness alcanzado en esta ejecución
+        best_val = np.min(run) # Usamos min porque pymoo minimiza por defecto
+        
+        # Encontramos el primer índice donde aparece ese valor
+        first_gen_reached = np.where(np.array(run) == best_val)[0][0]
+        stagnation_gens.append(first_gen_reached)
+        
+        # Calculamos evaluaciones
+        if all_evals is not None:
+            # Para Scatter Search usamos los datos capturados
+            stagnation_evals.append(all_evals[i][first_gen_reached])
+        else:
+            # Para GA usamos la fórmula (gen * pop_size)
+            stagnation_evals.append(first_gen_reached * pop_size)
+            
+    return {
+        "mean_gen": np.mean(stagnation_gens),
+        "std_gen": np.std(stagnation_gens),
+        "mean_evals": np.mean(stagnation_evals),
+        "std_evals": np.std(stagnation_evals)
+    }
 
 
 def run_experiment(problem,n_runs=5,seeds=None):
@@ -32,6 +59,7 @@ def run_experiment(problem,n_runs=5,seeds=None):
             self.data["best"] = []
             self.data["diversity"] = []
             self.data["added"] = []
+            self.data["n_evals"] = []
             
         def notify(self, algorithm):
             # 1. Capture Best Fitness
@@ -61,7 +89,14 @@ def run_experiment(problem,n_runs=5,seeds=None):
             else:
                 self.data["added"].append(0)
 
-    all_ss_fitness, all_ss_diversity, all_ss_added = [], [], []
+            # 4. Capture Evaluated Solutions per iteration
+            if hasattr(algorithm, "evaluator"):
+                self.data["n_evals"].append(algorithm.evaluator.n_eval)
+            else:
+                self.data["n_evals"].append(0)
+            
+
+    all_ss_fitness, all_ss_diversity, all_ss_added, all_ss_evals = [], [], [], []
     all_ga_fitness, all_ga_diversity, all_ga_added = [], [], []
     ss_times, ga_times = [], []
 
@@ -75,14 +110,14 @@ def run_experiment(problem,n_runs=5,seeds=None):
         probflip = 1/N
 
         # Vamos a probar a ver si jalaaaa AAAAHH
-        combination_method = SinglePointCrossover()
-        diversification_method = FrequencyBinaryDiversification()
-        starting_improv = LocalSearch_BitFlipMutation(prob_var=probflip,n_neighbors=2, max_steps=2)
-        improvement_method = LocalSearch_BitFlipMutation(prob_var=probflip,n_neighbors=2, max_steps=2)
+        combination_method = TwoPointCrossover()
+        diversification_method = BinaryRandomSampling()
+        starting_improv = LocalSearch_BitFlipMutation(prob_var=probflip, n_neighbors=2, max_steps=2)
+        improvement_method = LocalSearch_BitFlipMutation(prob_var=probflip, n_neighbors=3, max_steps=3)
     
         # Initialize the algorithm
         ss_algorithm = ScatterSearch(
-            subset_generation_method=TournamentSubsetGeneration2(tournament_k=2, n_pairs=20),
+            subset_generation_method=BinaryTournamentSubsetGeneration(),
             combination_method=PymooCrossoverCombination(combination_method),
             diversification_method=diversification_method,
             initial_improvement_method=starting_improv,
@@ -107,6 +142,7 @@ def run_experiment(problem,n_runs=5,seeds=None):
         all_ss_fitness.append(res_ss.algorithm.callback.data["best"])
         all_ss_diversity.append(res_ss.algorithm.callback.data["diversity"])
         all_ss_added.append(res_ss.algorithm.callback.data["added"])
+        all_ss_evals.append(res_ss.algorithm.callback.data["n_evals"])
         
         # Run GA
         start = time.time()
@@ -116,18 +152,7 @@ def run_experiment(problem,n_runs=5,seeds=None):
         all_ga_diversity.append(res_ga.algorithm.callback.data["diversity"])
         all_ga_added.append([0] * len(res_ga.algorithm.callback.data["best"]))
 
-    # Uniformity check
-    min_l = min(min(len(run) for run in all_ss_fitness), min(len(run) for run in all_ga_fitness))
-    
-    def truncate(data, length):
-        return np.array([run[:length] for run in data])
 
-    all_ss_fitness = truncate(all_ss_fitness, min_l)
-    all_ga_fitness = truncate(all_ga_fitness, min_l)
-    all_ss_diversity = truncate(all_ss_diversity, min_l)
-    all_ga_diversity = truncate(all_ga_diversity, min_l)
-    all_ss_added = truncate(all_ss_added, min_l)
-    all_ga_added = truncate(all_ga_added, min_l)
     
     # ARREGLO CLAVE: Quitar el primer elemento [1:] para evitar el "punto cero"
     ss_f_mean = np.mean(all_ss_fitness, axis=0)[1:]
@@ -143,12 +168,16 @@ def run_experiment(problem,n_runs=5,seeds=None):
     ss_a_mean = np.mean(all_ss_added, axis=0)[1:]
     ss_a_std = np.std(all_ss_added, axis=0)[1:]
 
+    ss_e_mean = np.mean(all_ss_evals, axis=0)
+    ss_e_std = np.std(all_ss_evals, axis=0)
+    ga_evals = 100 * np.arange(1, n_gen)
+
     # Visualization
     plt.style.use('seaborn-v0_8-darkgrid')
     fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 16))
     
     # Nuevo eje X ajustado (empezando en generación 1)
-    gens = np.arange(1, min_l)
+    gens = np.arange(1, n_gen)
     
     # 1. Convergence Plot
     # Calbiar la std a intervalo de confianza del 95%
@@ -193,35 +222,63 @@ def run_experiment(problem,n_runs=5,seeds=None):
     plt.ylabel("Fitness")
     plt.savefig("boxplot_fitness.png", dpi=120)
 
-    # Histograma de diversidad final
-    final_ss_div =  [run[-1] for run in all_ss_diversity]
-    final_ga_div = [run[-1] for run in all_ga_diversity]
+    # Evaluations per generation
+    # Calbiar la std a intervalo de confianza del 95%
+    ss_e_std = ss_e_std * 1.96 / np.sqrt(n_runs)
+    gens = np.arange(1, n_gen+1)
+    ga_evals = 100 * gens
 
     plt.figure(figsize=(8,6))
-    plt.hist(final_ss_div, bins=10, alpha=0.6, label='Scatter Search')
-    plt.hist(final_ga_div, bins=10, alpha=0.6, label='Genetic Algorithm')
-    plt.title("Histograma de Diversidad Final")
-    plt.xlabel("Hamming Distance (%)")
-    plt.ylabel("Frecuencia")
+    plt.plot(gens, ss_e_mean, label='Scatter Search Evaluations', color='#636EFA', linewidth=2)
+    plt.fill_between(gens, ss_e_mean - ss_e_std, ss_e_mean + ss_e_std, color='#636EFA', alpha=0.2)
+    plt.plot(gens, ga_evals, label='Genetic Algorithm Evaluations', color='#EF553B', linewidth=2)
+    plt.title("Evaluations per Generation")
+    plt.xlabel("Generation")
+    plt.ylabel("Evaluations")
     plt.legend()
-    plt.savefig("hist_diversity.png", dpi=120)
+    plt.savefig("evaluations_per_generation.png", dpi=120)
+
+    # --- Cálculo de Estancamiento ---
+    ss_stagnation = get_stagnation_stats(all_ss_fitness, all_ss_evals)
+    ga_stagnation = get_stagnation_stats(all_ga_fitness, pop_size=100)
+
+    print("\n" + "="*30)
+    print("MÉTRICAS DE ESTANCAMIENTO")
+    print("="*30)
+    print(f"Scatter Search:")
+    print(f"  - Gen. promedio de estancamiento: {ss_stagnation['mean_gen']:.2f} ± {ss_stagnation['std_gen']:.2f}")
+    print(f"  - Evals promedio de estancamiento: {ss_stagnation['mean_evals']:.2f} ± {ss_stagnation['std_evals']:.2f}")
+    print(f"  - Mejor fitness alcanzado: {min(final_ss):.4f}")
+    print(f"  - Peor fitness alcanzado: {max(final_ss):.4f}")
+    print(f"  - Evals totales: {ss_e_mean[-1]:.2f} ± {ss_e_std[-1]:.2f}")
+    print(f"  - Tiempo total: {np.mean(ss_times):.2f} ± {np.std(ss_times):.2f}")
+    
+    print(f"\nGenetic Algorithm:")
+    print(f"  - Gen. promedio de estancamiento: {ga_stagnation['mean_gen']:.2f} ± {ga_stagnation['std_gen']:.2f}")
+    print(f"  - Evals promedio de estancamiento: {ga_stagnation['mean_evals']:.2f} ± {ga_stagnation['std_evals']:.2f}")
+    print(f"  - Mejor fitness alcanzado: {min(final_ga):.4f}")
+    print(f"  - Peor fitness alcanzado: {max(final_ga):.4f}")
+    print(f"  - Tiempo total: {np.mean(ga_times):.2f} ± {np.std(ga_times):.2f}")
+    print("="*30)
+
 
 if __name__ == "__main__":
     # Configuration
     N, K = 100, 6
-    n_gen = 100
+    n_gen = 80
     problem = NKLandscape(N=N, K=K)
 
 
     #QUBO
+    np.random.seed(42)
     Q = np.random.randint(-5, 10, size=(N, N))
     Q = (Q + Q.T) // 2
     #Turn odd index values into -10
-    for i in range(N):
-        for j in range(i+1,N):
-            if i % 2 == 0:
-                Q[i, j] = -10
-                Q[j, i] = -10
+    #for i in range(N):
+    #    for j in range(i+1,N):
+    #        if i % 2 == 0:
+    #            Q[i, j] = -10
+    #            Q[j, i] = -10
     problem2 = QUBO(Q)
 
     #run_experiment(problem,n_runs=30)

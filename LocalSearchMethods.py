@@ -10,6 +10,10 @@ class LocalSearchImprovement:
         self.use_cache = use_cache
         self.cache = {} if use_cache else None
         self.evaluator = None
+        self.comm = None
+
+    def set_comm(self, comm):
+        self.comm = comm
 
     def set_problem(self, problem):
         self.problem = problem
@@ -17,8 +21,7 @@ class LocalSearchImprovement:
     def set_evaluator(self, evaluator):
         self.evaluator = evaluator
 
-    def set_comm(self, comm):
-        self.comm = comm
+
 
     def _get_evaluator(self):
         from pymoo.core.evaluator import Evaluator as _Ev
@@ -144,6 +147,7 @@ class LocalSearch_BitFlipMutation:
         self.n_neighbors = n_neighbors
         self.mutation = BitflipMutation(prob=1, prob_var=prob_var)
         self.evaluator = None
+        self.comm = None
 
     def set_problem(self, problem):
         self.problem = problem

@@ -45,7 +45,7 @@ class ScatterSearchOutput(Output):
 
 class ScatterSearch(Algorithm):
     def __init__(self, subset_generation_method, combination_method, diversification_method, initial_improvement_method, improvement_method, ReferenceSet,
-                 reference_set_size=10, solution_pool_size=100, diversity_threshold=0.0, stagnation_limit=15, comm=None, **kwargs):
+                 reference_set_size=10, solution_pool_size=100, diversity_threshold=0.0, stagnation_limit=5, comm=None, **kwargs):
         # Set our custom display before calling super().__init__ so pymoo picks it up
         kwargs.setdefault("output", ScatterSearchOutput(comm=comm))
         super().__init__(**kwargs)
@@ -127,7 +127,9 @@ class ScatterSearch(Algorithm):
         self.n_added = len(self.reference_set[0])
         
         # Check for stagnation
-        #self._stagnation_check()
+        
+        
+        self._stagnation_check()
         
         # Pymoo telemetry hook: it reads the population from self.pop
         # We use the full RefSet to ensure self.opt is correctly updated
@@ -135,14 +137,16 @@ class ScatterSearch(Algorithm):
         self.opt = filter_optimum(self.pop, least_infeasible=True)
     
     def _stagnation_check(self):
+        #if self.n_added == 0:
+        #    self.stagnation_counter += 1
+        #else:
+        #    self.stagnation_counter = 0
+        #
+        #if self.stagnation_counter >= self.stagnation_limit:
+        #    self._restart()
+        #    self.stagnation_counter = 0
         if self.n_added == 0:
-            self.stagnation_counter += 1
-        else:
-            self.stagnation_counter = 0
-        
-        if self.stagnation_counter >= self.stagnation_limit:
             self._restart()
-            self.stagnation_counter = 0
 
     def _restart(self):
         # 1. Conservar el mejor absoluto
@@ -150,7 +154,7 @@ class ScatterSearch(Algorithm):
         
         # 2. Generar un nuevo pool diverso
         new_pool = self.diversification_method.do(self.problem, self.solution_pool_size - 1)
-        new_pool = self.improvement_method.improve_pool(new_pool)
+        new_pool = self.initial_improvement_method.improve_pool(new_pool)
         
         # 3. Combinar el mejor con el nuevo pool
         combined_pool = [best_sol] + list(new_pool)

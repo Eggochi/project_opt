@@ -10,6 +10,7 @@ from pymoo.core.population import Population
 import random
 from pymoo.core.individual import Individual
 from pymoo.util.optimum import filter_optimum
+import inspect
 
 
 class ScatterSearchOutput(Output):
@@ -103,6 +104,7 @@ class ScatterSearch(Algorithm):
         self.n_added = len(self.reference_set[0])
         
         # Check for stagnation
+        self._stagnation_check()
         
         # Pymoo telemetry hook: it reads the population from self.pop
         # We use the full RefSet to ensure self.opt is correctly updated
@@ -111,26 +113,37 @@ class ScatterSearch(Algorithm):
     
     def _stagnation_check(self):
         if self.n_added == 0:
-            self.stagnation_counter += 1
-        else:
-            self.stagnation_counter = 0
-        
-        if self.stagnation_counter >= self.stagnation_limit:
             self._restart()
-            self.stagnation_counter = 0
 
     def _restart(self):
         # 1. Conservar el mejor absoluto
         best_sol = self.opt[0] if self.opt is not None else self.reference_set[0][0]
         
-        # 2. Generar un nuevo pool diverso
-        new_pool = self.diversification_method.do(self.problem, self.solution_pool_size - 1)
+        # 2. Identificar si el método acepta 'seed_population'
+        # Obtenemos la firma del método .do()
+        sig = inspect.signature(self.diversification_method.do)
+    
+        if 'seed_population' in sig.parameters:
+            # Si lo acepta (como tu FrequencyBinaryDiversification2)
+            new_pool = self.diversification_method.do(
+            self.problem, 
+            self.solution_pool_size - 1, 
+            seed_population=self.ReferenceSet.RefSet
+        )
+        else:
+            # Si es un método estándar de pymoo o simple
+            new_pool = self.diversification_method.do(
+            self.problem, 
+            self.solution_pool_size - 1
+        )
+
+        # 3. Mejorar el pool diversificado
         new_pool = self.improvement_method.improve_pool(new_pool)
         
-        # 3. Combinar el mejor con el nuevo pool
+        # 4. Combinar el mejor con el nuevo pool
         combined_pool = [best_sol] + list(new_pool)
         
-        # 4. Re-crear el Reference Set desde cero para asegurar diversidad
+        # 5. Re-crear el Reference Set desde cero para asegurar diversidad
         self.ReferenceSet.create(combined_pool, self.reference_set_size, diversity_threshold=0.0)
         self.reference_set = (self.ReferenceSet.RefSet, [])  # (new_solutions, old_solutions)
         self.n_added = self.reference_set_size  # Mark as "fully updated" for telemetry
@@ -142,7 +155,7 @@ class ScatterSearch(Algorithm):
             if hasattr(method, 'set_evaluator'):
                 method.set_evaluator(self.evaluator)
             if hasattr(method, 'set_comm'):
-                method.set_comm(self.comm)
+                method.set_comm(getattr(self, 'comm', None))
             
         
 

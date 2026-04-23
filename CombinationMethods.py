@@ -2,6 +2,7 @@ import numpy as np
 from itertools import combinations, product
 import random
 from pymoo.core.individual import Individual
+from pymoo.core.population import Population
 
 class ExhaustiveSubsetGeneration:
     def __init__(self):
@@ -42,8 +43,6 @@ class TournamentSubsetGeneration:
             pairs.append((p1, p2))
             
         return pairs
-
-import random
 
 class TournamentSubsetGeneration2:
     def __init__(self, tournament_k=2, n_pairs=None):
@@ -93,10 +92,62 @@ class TournamentSubsetGeneration2:
             
         return pairs
 
+import numpy as np
+
+class BinaryTournamentSubsetGeneration:
+    def __init__(self):
+        pass
+        
+    def generate(self, reference_set):
+        new_solutions, old_solutions = reference_set
+        
+        # 1. Unificar todas las soluciones en una lista
+        all_solutions = list(new_solutions)
+        if old_solutions is not None:
+            all_solutions.extend(old_solutions)
+        
+        n = len(all_solutions)
+        # Necesitamos al menos 2 soluciones para formar 1 pareja
+        if n < 2: return [] 
+
+        # 2. Generar y barajar índices
+        indices = np.arange(n)
+        p1 = indices.copy()
+        p2 = indices.copy()
+        np.random.shuffle(p1)
+        np.random.shuffle(p2)
+        
+        # Concatenamos para procesar todo en un solo bucle
+        combined_idx = np.concatenate([p1, p2])
+        # n es par, así que combined_idx (2n) siempre es divisible entre 2
+        pairs_idx = np.split(combined_idx, len(combined_idx) // 2)
+
+        # 3. Torneo: Guardamos solo los índices de los ganadores
+        winners = []
+        for i, j in pairs_idx:
+            if all_solutions[i].F[0] < all_solutions[j].F[0]:
+                winners.append(i)
+            else:
+                winners.append(j)
+        
+        # 4. Formar pares finales con los objetos reales
+        pairs = []
+        # Iteramos de 2 en 2 para emparejar ganadores
+        for k in range(0, len(winners) - 1, 2):
+            if k + 1 < len(winners):
+                idx1 = winners[k]
+                idx2 = winners[k+1]
+                pairs.append((all_solutions[idx1], all_solutions[idx2]))
+
+            
+        return pairs
+
+
 class PymooCrossoverCombination:
     def __init__(self, crossover_operator, problem=None):
         self.crossover = crossover_operator
         self.problem = problem
+        self.comm = None
 
     def set_problem(self, problem):
         self.problem = problem
@@ -143,91 +194,115 @@ class PymooCrossoverCombination:
             return offspring
 
 class PathRelinking_RCL:
-    def __init__(self, problem, alpha=0.5, evaluator=None):
-        self.problem = problem
+    def __init__(self, alpha=0.5, max_candidates=5, max_steps=1):
+        self.problem = None
+        self.evaluator = None
+        self.comm = None
+        
         self.alpha = alpha
-        from pymoo.core.evaluator import Evaluator
-        self.evaluator = evaluator if evaluator is not None else Evaluator()
+        self.max_candidates = max_candidates
+        self.max_steps = max_steps
+        
+
+    def set_problem(self, problem):
+        self.problem = problem
+
+    def set_evaluator(self, evaluator):
+        self.evaluator = evaluator
 
     def set_comm(self, comm):
         self.comm = comm
-        
+
+    def _get_evaluator(self):
+        from pymoo.core.evaluator import Evaluator
+        return self.evaluator if self.evaluator is not None else Evaluator()
+
     def combine(self, pairs):
-        # --- MPI Parallel Work Distribution ---
-        if hasattr(self, 'comm') and self.comm is not None:
+        """
+        Punto de entrada para Scatter Search.
+        'pairs' es una lista de tuplas (Indiv1, Indiv2).
+        """
+        # Distribución de trabajo para MPI
+        if self.comm is not None:
             size = self.comm.Get_size()
             rank = self.comm.Get_rank()
-            my_pairs = list(np.array_split(pairs, size)[rank])
+            my_pairs = np.array_split(pairs, size)[rank]
         else:
             my_pairs = pairs
 
-        # Using a list comprehension here is fine, but we process pairs
-        offspring = [res for p in my_pairs for res in (self._relink(p[0], p[1]), self._relink(p[1], p[0]))]
+        offspring = []
+        for p1, p2 in my_pairs:
+            # Relinking en ambas direcciones (bidireccional)
+            offspring.append(self._relink(p1, p2))
+            offspring.append(self._relink(p2, p1))
 
-        # --- MPI Gather ---
-        if hasattr(self, 'comm') and self.comm is not None:
+        # Sincronización MPI
+        if self.comm is not None:
             gathered = self.comm.allgather(offspring)
             return [s for sublist in gathered for s in sublist]
-        else:
-            return offspring
+        
+        return offspring
 
     def _relink(self, sol_start, sol_target):
-        # 1. Setup initial state
-        x = np.array(sol_start.X).copy()
-        target = np.array(sol_target.X).copy()
+        ev = self._get_evaluator()
+        max_candidates = self.max_candidates
+        x_curr = np.copy(sol_start.X)
+        target = sol_target.X
         
-        x_best = x.copy()
-        f_best = sol_start.F[0]
+        best_x = np.copy(x_curr)
+        best_f = sol_start.F[0]
+    
+        # Índices donde las soluciones difieren
+        diff_indices = np.where(x_curr != target)[0]
+        steps = 0
+    
+        # Mientras existan diferencias y no hayamos llegado al objetivo
+        while len(diff_indices) > 0 or steps < self.max_steps:
+            # --- REDUCCIÓN DE EVALUACIONES: Muestreo Agresivo ---
+            steps += 1
+            # No evaluamos todos los movimientos, solo una pequeña muestra aleatoria
+            n_to_sample = min(len(diff_indices), max_candidates)
+            # Seleccionamos posiciones aleatorias de la lista de diferencias
+            sample_indices_in_diff = np.random.choice(len(diff_indices), n_to_sample, replace=False)
+            current_sample = diff_indices[sample_indices_in_diff]
         
-        # 2. Track indices that need to change
-        # This is faster than re-scanning the whole array inside the loop
-        remaining_diffs = np.where(x != target)[0]
-        
-        while len(remaining_diffs) > 0:
-            n_candidates = len(remaining_diffs)
-            
-            # 3. Vectorized Candidate Generation
-            # Pre-allocate the matrix for speed
-            batch_X = np.empty((n_candidates, x.shape[0]), dtype=x.dtype)
-            batch_X[:] = x
-            
-            # Apply one unique move per row
-            for i, idx in enumerate(remaining_diffs):
+            # Crear candidatos para evaluar
+            batch_X = np.tile(x_curr, (len(current_sample), 1))
+            for i, idx in enumerate(current_sample):
                 batch_X[i, idx] = target[idx]
-            
-            # 4. Batch Evaluation
-            pop = Population.new("X", batch_X)
-            self.evaluator.eval(self.problem, pop)
-            f_vals = pop.get("F").flatten()
-            
-            # 5. RCL Logic
-            f_min, f_max = f_vals.min(), f_vals.max()
-            
-            # If all improvements are equal, threshold logic can be simplified
+        
+            # Evaluación por lotes
+            pop_cand = Population.new("X", batch_X)
+            ev.eval(self.problem, pop_cand)
+        
+            # Extraer f_vals asegurando que sea un vector (N,)
+            f_vals = pop_cand.get("F")
+            if f_vals is None or len(f_vals) == 0: break
+            f_vals = f_vals[:, 0] # Tomamos solo el primer objetivo si es QUBO
+        
+            # --- Lógica RCL ---
+            f_min, f_max = np.min(f_vals), np.max(f_vals)
             if f_max == f_min:
-                chosen_local_idx = random.randrange(n_candidates)
+                idx_in_f_vals = random.randrange(len(f_vals))
             else:
                 threshold = f_min + self.alpha * (f_max - f_min)
                 rcl_indices = np.where(f_vals <= threshold)[0]
-                chosen_local_idx = random.choice(rcl_indices)
-            
-            # 6. State Update
-            # Get the global index of the move we just made
-            moved_idx = remaining_diffs[chosen_local_idx]
-            
-            x[moved_idx] = target[moved_idx]
-            f_next = f_vals[chosen_local_idx]
-            
-            # Update best-so-far
-            if f_next < f_best:
-                x_best = x.copy()
-                f_best = f_next
-            
-            # 7. Remove the used index from our "to-do" list
-            # Much faster than np.where() on the whole array
-            remaining_diffs = np.delete(remaining_diffs, chosen_local_idx)
+                idx_in_f_vals = random.choice(rcl_indices)
+        
+            # --- ACTUALIZACIÓN DE ESTADO (Aquí estaba el error) ---
+            # 1. Obtenemos el índice real del vector X
+            global_idx = current_sample[idx_in_f_vals]
+        
+            # 2. Aplicamos el movimiento
+            x_curr[global_idx] = target[global_idx]
+        
+            # 3. Guardamos si es mejor que lo visto en este camino
+            if f_vals[idx_in_f_vals] < best_f:
+                best_f = f_vals[idx_in_f_vals]
+                best_x = np.copy(x_curr)
+        
+            # 4. ACTUALIZACIÓN CRÍTICA: Recalcular diff_indices
+            # Es más seguro recalcular o filtrar el índice usado
+            diff_indices = np.delete(diff_indices, sample_indices_in_diff[idx_in_f_vals])
 
-        # Return result as a pymoo Individual
-        res = Individual(X=x_best)
-        res.F = np.array([f_best])
-        return res
+        return Individual(X=best_x, F=np.array([best_f]))

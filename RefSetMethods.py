@@ -108,17 +108,19 @@ class ReferenceSet:
             
             # Elegir el que tiene la mayor "distancia mínima" (el más lejano)
             best_idx = np.where(available_mask, min_dists, -1).argmax()
-            
-            if min_dists[best_idx] < threshold:
-                break # No hay más soluciones diversas
+
+            if best_idx == -1:
+                break
             
             if tuple(X_pool[best_idx]) not in self.seen_solutions:
                 ref_indices.append(best_idx)
-                available_mask[best_idx] = False
                 self.seen_solutions.add(tuple(X_pool[best_idx]))
+                
+                # Actualizar distancias mínimas considerando al nuevo integrante
+                new_dists = cdist(X_pool, X_pool[best_idx].reshape(1, -1), metric=self.diversity_measure).flatten() * L
+                min_dists = np.minimum(min_dists, new_dists)
             
-            # Actualizar distancias mínimas considerando al nuevo integrante
-            new_dists = cdist(X_pool, X_pool[best_idx].reshape(1, -1), metric=self.diversity_measure).flatten() * L
-            min_dists = np.minimum(min_dists, new_dists)
+            # SIEMPRE marcamos como no disponible
+            available_mask[best_idx] = False
             
         return ref_indices
