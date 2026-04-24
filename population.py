@@ -8,6 +8,12 @@ class FrequencyBinaryDiversification:
     a balanced distribution of True/False values across 
     the initial solution pool using frequency memory.
     """
+
+    def __init__(self):
+        self.rng = np.random.default_rng()
+
+    def set_seed(self, seed):
+        self.rng = np.random.default_rng(seed)
     
     def do(self, problem, n_samples):
         # 1. Setup metadata from the pymoo problem
@@ -36,7 +42,7 @@ class FrequencyBinaryDiversification:
                 prob_true = w_true / (w_true + w_false)
                 
                 # Assign value and update memory
-                if random.random() < prob_true:
+                if self.rng.random() < prob_true:
                     X[i, v] = True
                     true_counts[v] += 1
                 else:
@@ -48,9 +54,15 @@ class FrequencyBinaryDiversification:
 
 class FrequencyBinaryDiversification2:
     """
-    Versión optimizada y vectorizada de la diversificación por frecuencia.
+    Versón optimizada y vectorizada de la diversificación por frecuencia.
     Elimina el bucle interno de variables para ganar velocidad.
     """
+
+    def __init__(self):
+        self.rng = np.random.default_rng()
+
+    def set_seed(self, seed):
+        self.rng = np.random.default_rng(seed)
     
     def do(self, problem, n_samples, seed_population=None):
         n_vars = problem.n_var
@@ -79,8 +91,60 @@ class FrequencyBinaryDiversification2:
             prob_true = (false_counts + 1.0) / (total_so_far + 2.0)
             
             # Generar toda la fila de una vez
-            row_bits = np.random.random(n_vars) < prob_true
+            row_bits = self.rng.random(n_vars) < prob_true
             X[i, :] = row_bits
+            
+            # Actualizar memoria de frecuencia (vectorizado)
+            true_counts += row_bits
+            
+        #Metodo de mejora aqui
+        return Population.new("X", X)
+
+
+class FrequencyBinaryDiversificationWithSemiGreedy:
+    """
+    Versión optimizada y vectorizada de la diversificación por frecuencia.
+    Elimina el bucle interno de variables para ganar velocidad.
+    """
+
+    def __init__(self):
+        self.rng = np.random.default_rng()
+
+    def set_seed(self, seed):
+        self.rng = np.random.default_rng(seed)
+    
+    def do(self, problem, n_samples, seed_population=None):
+        n_vars = problem.n_var
+        
+        # 1. Inicializar conteos (soporta semillas previas)
+        if seed_population is None:
+            true_counts = np.zeros(n_vars)
+            offset = 0
+        else:
+            # Convertimos la población semilla a matriz y sumamos columnas
+            X_seed = np.array([ind.X for ind in seed_population])
+            true_counts = X_seed.sum(axis=0).astype(float)
+            offset = len(seed_population)
+        
+        # 2. Pre-asignar la matriz de resultados
+        X = np.empty((n_samples, n_vars), dtype=bool)
+        
+        # 3. Generación por filas (el bucle de muestras es necesario por la dependencia)
+        # Pero las operaciones dentro son vectorizadas (NumPy)
+        for i in range(n_samples):
+            total_so_far = i + offset
+            false_counts = total_so_far - true_counts
+            
+            # Simplificación matemática de: w_true / (w_true + w_false)
+            # Prob = (1/(T+1)) / (1/(T+1) + 1/(F+1)) -> (F+1) / (T+F+2)
+            prob_true = (false_counts + 1.0) / (total_so_far + 2.0)
+            
+            # Generar toda la fila de una vez
+            row_bits = self.rng.random(n_vars) < prob_true
+            X[i, :] = row_bits
+
+            #usar metodo de mejora
+            #conseguir nuevo row_
             
             # Actualizar memoria de frecuencia (vectorizado)
             true_counts += row_bits

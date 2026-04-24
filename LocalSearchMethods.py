@@ -11,6 +11,10 @@ class LocalSearchImprovement:
         self.cache = {} if use_cache else None
         self.evaluator = None
         self.comm = None
+        self.rng = np.random.default_rng()
+
+    def set_seed(self, seed):
+        self.rng = np.random.default_rng(seed)
 
     def set_comm(self, comm):
         self.comm = comm
@@ -109,9 +113,9 @@ class LocalSearchImprovement:
             while improved and (self.max_steps is None or steps < self.max_steps):
                 improved = False
                 if self.neighbor_sample is not None:
-                    indices = np.random.choice(n, k, replace=False)
+                    indices = self.rng.choice(n, k, replace=False)
                 else:
-                    indices = np.random.permutation(n)
+                    indices = self.rng.permutation(n)
 
                 neighbors_buffer[:] = x
                 if x.dtype == bool:
@@ -145,9 +149,13 @@ class LocalSearch_BitFlipMutation:
         self.problem = problem
         self.max_steps = max_steps
         self.n_neighbors = n_neighbors
-        self.mutation = BitflipMutation(prob=1, prob_var=prob_var)
+        self.prob_var = prob_var
         self.evaluator = None
         self.comm = None
+        self.rng = np.random.default_rng()
+
+    def set_seed(self, seed):
+        self.rng = np.random.default_rng(seed)
 
     def set_problem(self, problem):
         self.problem = problem
@@ -189,10 +197,13 @@ class LocalSearch_BitFlipMutation:
             N = len(my_solutions)
 
             for _ in range(self.max_steps):
-                X = my_solutions.get("X")
-                X_rep = np.repeat(X, self.n_neighbors, axis=0)
-                pop_rep = Population.new("X", X_rep)
-                mutated = self.mutation(self.problem, pop_rep)
+                X = my_solutions.get("X")  # shape (N, n_vars)
+                X_rep = np.repeat(X, self.n_neighbors, axis=0)  # (N*n_neighbors, n_vars)
+
+                # Manual bit-flip using the isolated RNG (avoids global np.random state)
+                flip_mask = self.rng.random(X_rep.shape) < self.prob_var
+                X_mut = X_rep ^ flip_mask  # XOR flips True bits where mask is True
+                mutated = Population.new("X", X_mut)
                 ev.eval(self.problem, mutated)
 
                 F = mutated.get("F").reshape(N, self.n_neighbors)

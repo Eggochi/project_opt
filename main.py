@@ -59,22 +59,21 @@ def main():
         comm=comm
     )        
 
-    # 2. SEMILLA DISTINTA PARA CADA NODO EN EL ALGORITMO
-    # Si no hacemos esto, el paralelismo es inútil porque todos exploran lo mismo
-    my_seed = 42 + rank
-
     if rank == 0:
         print(f"Iniciando Scatter Search con {size} procesos...")
 
     # Sincronizamos procesos antes de medir el tiempo real
     comm.barrier()
     
-    # Solo activamos verbose en rank 0 para no ensuciar la consola
+    # seed=42 is the base seed for all ranks.
+    # _propagate_methods gives diversification/subset-gen seed=42 (identical across ranks)
+    # and improvement methods seed=42+rank (different per rank, so local search explores
+    # different neighborhoods in parallel).
     res = minimize(
         problem_qubo, 
         algorithm, 
         ('n_gen', 100), 
-        seed=my_seed, 
+        seed=42, 
         verbose=(rank == 0) 
     )
     

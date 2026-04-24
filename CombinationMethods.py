@@ -15,11 +15,16 @@ class ExhaustiveSubsetGeneration:
             pairs.extend(product(new_solutions, old_solutions))
         return pairs
 
+
 class TournamentSubsetGeneration:
-    def __init__(self, tournament_k=2, n_pairs=None):
+    def __init__(self, tournament_k=2, n_pairs=None, seed=None):
         self.tournament_k = tournament_k
         self.n_pairs = n_pairs
-        
+        self.rng = np.random.default_rng(seed)
+
+    def set_seed(self, seed):
+        self.rng = np.random.default_rng(seed)
+
     def generate(self, reference_set):
         new_solutions, old_solutions = reference_set
         
@@ -35,20 +40,25 @@ class TournamentSubsetGeneration:
 
         pairs = []
         for _ in range(n_pairs):
-            p1 = min(random.sample(all_solutions, min(self.tournament_k, len(all_solutions))), key=lambda x: x.F[0])
-            p2 = min(random.sample(all_solutions, min(self.tournament_k, len(all_solutions))), key=lambda x: x.F[0])
+            p1 = min(self.rng.choice(all_solutions, min(self.tournament_k, len(all_solutions)), replace=False), key=lambda x: x.F[0])
+            p2 = min(self.rng.choice(all_solutions, min(self.tournament_k, len(all_solutions)), replace=False), key=lambda x: x.F[0])
             if p1 is p2 and len(all_solutions) > 1:
                 pool_without_p1 = [s for s in all_solutions if s is not p1]
-                p2 = min(random.sample(pool_without_p1, min(self.tournament_k, len(pool_without_p1))), key=lambda x: x.F[0])
+                p2 = min(self.rng.choice(pool_without_p1, min(self.tournament_k, len(pool_without_p1)), replace=False), key=lambda x: x.F[0])
             pairs.append((p1, p2))
             
         return pairs
 
+
 class TournamentSubsetGeneration2:
-    def __init__(self, tournament_k=2, n_pairs=None):
+    def __init__(self, tournament_k=2, n_pairs=None, seed=None):
         self.tournament_k = tournament_k
         self.n_pairs = n_pairs
-        
+        self.rng = np.random.default_rng(seed)
+
+    def set_seed(self, seed):
+        self.rng = np.random.default_rng(seed)
+
     def generate(self, reference_set):
         new_solutions, old_solutions = reference_set
         
@@ -75,7 +85,7 @@ class TournamentSubsetGeneration2:
 
         for _ in range(n_pairs):
             # 1. Seleccionar p1 haciendo torneo sobre TODAS las soluciones
-            p1 = min(random.sample(all_solutions, min(self.tournament_k, len(all_solutions))), key=lambda x: x.F[0])
+            p1 = min(self.rng.choice(all_solutions, min(self.tournament_k, len(all_solutions)), replace=False), key=lambda x: x.F[0])
             
             # 2. Definir de dónde podemos sacar a p2
             if id(p1) in old_ids:
@@ -86,17 +96,20 @@ class TournamentSubsetGeneration2:
                 pool_p2 = [s for s in all_solutions if s is not p1]
             
             # 3. Seleccionar p2 del pool correspondiente
-            p2 = min(random.sample(pool_p2, min(self.tournament_k, len(pool_p2))), key=lambda x: x.F[0])
+            p2 = min(self.rng.choice(pool_p2, min(self.tournament_k, len(pool_p2)), replace=False), key=lambda x: x.F[0])
+
             
             pairs.append((p1, p2))
             
         return pairs
 
-import numpy as np
 
 class BinaryTournamentSubsetGeneration:
     def __init__(self):
-        pass
+        self.rng = np.random.default_rng()
+
+    def set_seed(self, seed):
+        self.rng = np.random.default_rng(seed)
         
     def generate(self, reference_set):
         new_solutions, old_solutions = reference_set
@@ -114,8 +127,8 @@ class BinaryTournamentSubsetGeneration:
         indices = np.arange(n)
         p1 = indices.copy()
         p2 = indices.copy()
-        np.random.shuffle(p1)
-        np.random.shuffle(p2)
+        self.rng.shuffle(p1)
+        self.rng.shuffle(p2)
         
         # Concatenamos para procesar todo en un solo bucle
         combined_idx = np.concatenate([p1, p2])
@@ -148,6 +161,10 @@ class PymooCrossoverCombination:
         self.crossover = crossover_operator
         self.problem = problem
         self.comm = None
+        self.rng = np.random.default_rng()
+
+    def set_seed(self, seed):
+        self.rng = np.random.default_rng(seed)
 
     def set_problem(self, problem):
         self.problem = problem
@@ -183,7 +200,7 @@ class PymooCrossoverCombination:
         if not matings:
             offspring = []
         else:
-            offspring_pop = self.crossover.do(self.problem, matings)
+            offspring_pop = self.crossover.do(self.problem, matings, random_state=self.rng)
             offspring = list(offspring_pop)
 
         # --- MPI Gather ---
@@ -198,11 +215,13 @@ class PathRelinking_RCL:
         self.problem = None
         self.evaluator = None
         self.comm = None
-        
         self.alpha = alpha
         self.max_candidates = max_candidates
         self.max_steps = max_steps
-        
+        self.rng = np.random.default_rng()
+
+    def set_seed(self, seed):
+        self.rng = np.random.default_rng(seed)
 
     def set_problem(self, problem):
         self.problem = problem
@@ -263,7 +282,7 @@ class PathRelinking_RCL:
             # No evaluamos todos los movimientos, solo una pequeña muestra aleatoria
             n_to_sample = min(len(diff_indices), max_candidates)
             # Seleccionamos posiciones aleatorias de la lista de diferencias
-            sample_indices_in_diff = np.random.choice(len(diff_indices), n_to_sample, replace=False)
+            sample_indices_in_diff = self.rng.choice(len(diff_indices), n_to_sample, replace=False)
             current_sample = diff_indices[sample_indices_in_diff]
         
             # Crear candidatos para evaluar
@@ -283,11 +302,11 @@ class PathRelinking_RCL:
             # --- Lógica RCL ---
             f_min, f_max = np.min(f_vals), np.max(f_vals)
             if f_max == f_min:
-                idx_in_f_vals = random.randrange(len(f_vals))
+                idx_in_f_vals = int(self.rng.integers(0, len(f_vals)))
             else:
                 threshold = f_min + self.alpha * (f_max - f_min)
                 rcl_indices = np.where(f_vals <= threshold)[0]
-                idx_in_f_vals = random.choice(rcl_indices)
+                idx_in_f_vals = int(self.rng.choice(rcl_indices))
         
             # --- ACTUALIZACIÓN DE ESTADO (Aquí estaba el error) ---
             # 1. Obtenemos el índice real del vector X

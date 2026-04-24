@@ -47,12 +47,15 @@ class ScatterSearch(Algorithm):
         kwargs.setdefault("output", ScatterSearchOutput())
         super().__init__(**kwargs)
 
+        #Algorithms
         self.subset_generation_method = subset_generation_method
         self.combination_method = combination_method
         self.diversification_method = diversification_method
         self.initial_improvement_method = initial_improvement_method
         self.improvement_method = improvement_method
         self.ReferenceSet = ReferenceSet
+
+        #Hyperparameters
         self.reference_set_size = reference_set_size
         self.solution_pool_size = solution_pool_size
         self.diversity_threshold = diversity_threshold
@@ -63,15 +66,12 @@ class ScatterSearch(Algorithm):
     def _initialize(self):
         super()._initialize()
 
-        self._propagate_problem()
+        # Propagate initial settings (problem, evaluator, comm, seeds) to all methods
+        self._propagate_methods()
+
         # Clear stale cache entries — they were keyed to the previous problem.
         if hasattr(self.improvement_method, 'cache') and self.improvement_method.cache is not None:
             self.improvement_method.cache.clear()
-
-        # Propagate the algorithm's own Evaluator so n_eval is tracked in verbose output
-        for method in (self.initial_improvement_method, self.improvement_method):
-            if hasattr(method, 'set_evaluator'):
-                method.set_evaluator(self.evaluator)
 
         #Diversification Method
         #Generate initial solution pool using pymoo's do()
@@ -148,15 +148,41 @@ class ScatterSearch(Algorithm):
         self.reference_set = (self.ReferenceSet.RefSet, [])  # (new_solutions, old_solutions)
         self.n_added = self.reference_set_size  # Mark as "fully updated" for telemetry
 
-    def _propagate_problem(self):
-        for method in [self.subset_generation_method, self.combination_method, self.diversification_method, self.initial_improvement_method, self.improvement_method, self.ReferenceSet]:
+    def _propagate_methods(self):
+        comm = getattr(self, 'comm', None)
+        rank = comm.Get_rank() if comm is not None else 0
+        base_seed = self.seed  # e.g. 42 — same for all ranks
+        improvement_seed = (base_seed + rank) if base_seed is not None else None
+
+        # Methods that must be identical across all ranks (synchronized)
+        synchronized = [
+            self.subset_generation_method,
+            self.combination_method,
+            self.diversification_method,
+            self.ReferenceSet,
+        ]
+        # Methods that should differ per rank (explore different neighborhoods)
+        per_rank = [
+            self.initial_improvement_method,
+            self.improvement_method,
+        ]
+
+        for method in synchronized + per_rank:
             if hasattr(method, 'set_problem'):
                 method.set_problem(self.problem)
             if hasattr(method, 'set_evaluator'):
                 method.set_evaluator(self.evaluator)
             if hasattr(method, 'set_comm'):
-                method.set_comm(getattr(self, 'comm', None))
-            
+                method.set_comm(comm)
+
+        for method in synchronized:
+            if hasattr(method, 'set_seed'):
+                method.set_seed(base_seed)
+
+        for method in per_rank:
+            if hasattr(method, 'set_seed'):
+                method.set_seed(improvement_seed)
+
         
 
 
