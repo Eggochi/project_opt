@@ -1,23 +1,40 @@
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import time
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.spatial.distance import pdist
 
-from problemas import NKLandscape, QUBO
-from RefSetMethods import ReferenceSet
-from LocalSearchMethods import LocalSearchImprovement, LocalSearch_BitFlipMutation
-from CombinationMethods import PymooCrossoverCombination, ExhaustiveSubsetGeneration, TournamentSubsetGeneration2, BinaryTournamentSubsetGeneration
-from population import FrequencyBinaryDiversification, FrequencyBinaryDiversification2
-from ParallelScatterSearch import ScatterSearch
+from src.problemas import RepairKnapsack
+from src.RefSetMethods import ReferenceSet
+from src.LocalSearchMethods import (LocalSearch,
+    BitFlipMutationNeighborhood,
+    SingleBitFlipNeighborhood,
+    KnapsackNeighborhood,
+    SingleBitActivateNeighborhood,
+    MultipleBitActivateNeighborhood
+    )
+from src.CombinationMethods import (
+    PymooCrossoverCombination, 
+    ExhaustiveSubsetGeneration, 
+    TournamentSubsetGeneration2, 
+    BinaryTournamentSubsetGeneration)
+from src.population import FrequencyBinaryDiversification
+from src.ParallelScatterSearch import ScatterSearch
+from src.config import config
 
 
 from pymoo.algorithms.soo.nonconvex.ga import GA
 from pymoo.operators.crossover.pntx import TwoPointCrossover, SinglePointCrossover
 from pymoo.operators.crossover.ux import UniformCrossover
+from pymoo.operators.crossover.hux import HUX
 from pymoo.operators.sampling.rnd import BinaryRandomSampling
 from pymoo.operators.mutation.bitflip import BitflipMutation
 from pymoo.optimize import minimize
 from pymoo.core.callback import Callback
+from pymoo.problems.single.knapsack import create_random_knapsack_problem
 
 def get_stagnation_stats(all_fitness, all_evals=None, pop_size=100):
     stagnation_gens = []
@@ -47,7 +64,7 @@ def get_stagnation_stats(all_fitness, all_evals=None, pop_size=100):
     }
 
 
-def run_experiment(problem,n_runs=5,seeds=None):
+def run_experiment(problem,n_runs=10,seeds=None):
 
 
     print(f"Running {n_runs} trials for each algorithm on NK Landscape (N={N}, K={K})...")
@@ -57,7 +74,6 @@ def run_experiment(problem,n_runs=5,seeds=None):
         def __init__(self) -> None:
             super().__init__()
             self.data["best"] = []
-            self.data["diversity"] = []
             self.data["added"] = []
             self.data["n_evals"] = []
             
@@ -75,13 +91,7 @@ def run_experiment(problem,n_runs=5,seeds=None):
                 else:
                     self.data["best"].append(0.0) 
             
-            # 2. Capture Diversity
-            if algorithm.pop is not None and len(algorithm.pop) > 1:
-                X = algorithm.pop.get("X")
-                dists = pdist(np.atleast_2d(X), metric='hamming')
-                self.data["diversity"].append(np.mean(dists) * 100.0)
-            else:
-                self.data["diversity"].append(0.0)
+
             
             # 3. Capture RefSet Additions
             if hasattr(algorithm, "n_added"):
@@ -96,51 +106,60 @@ def run_experiment(problem,n_runs=5,seeds=None):
                 self.data["n_evals"].append(0)
             
 
-    all_ss_fitness, all_ss_diversity, all_ss_added, all_ss_evals = [], [], [], []
-    all_ga_fitness, all_ga_diversity, all_ga_added = [], [], []
-    ss_times, ga_times = [], []
+    all_ss_fitness, all_ss_added, all_ss_evals = [], [], []
+    all_ga_fitness = []
+    
+    ss_times = []
+    ga_times = []
+
+    probflip = 1 / (N)
+    neighbor_sample = 10
 
     for i in range(n_runs):
         if seeds is None:
             seed = 42 + i
         else:
             seed = seeds[i]
-        print(f"Trial {i+1}/{n_runs} (Seed {seed})...")
-        
-        probflip = 1/N
+        print(f"Trial {i+1}/{n_runs} (Seed {seed})...")   
 
         # Vamos a probar a ver si jalaaaa AAAAHH
-        combination_method = TwoPointCrossover()
+
+        subset_gen = BinaryTournamentSubsetGeneration()
+        neighborhood_generator = MultipleBitActivateNeighborhood(n_bits=2,sample=30)
+        combination_method = PymooCrossoverCombination(SinglePointCrossover())
         diversification_method = BinaryRandomSampling()
-        starting_improv = LocalSearch_BitFlipMutation(prob_var=probflip, n_neighbors=2, max_steps=2)
-        improvement_method = LocalSearch_BitFlipMutation(prob_var=probflip, n_neighbors=3, max_steps=3)
-    
-        # Initialize the algorithm
+        starting_improv = LocalSearch(neighborhood=BitFlipMutationNeighborhood(prob_var=probflip,n_neighbors=5),
+                             max_steps=1, 
+                             method="best_improvement")
+        improvement_method = LocalSearch(neighborhood=neighborhood_generator,
+                                  max_steps=3, 
+                                  method="best_improvement")
+
         ss_algorithm = ScatterSearch(
-            subset_generation_method=BinaryTournamentSubsetGeneration(),
-            combination_method=PymooCrossoverCombination(combination_method),
+            subset_generation_method=subset_gen,
+            combination_method=combination_method,
             diversification_method=diversification_method,
             initial_improvement_method=starting_improv,
             improvement_method=improvement_method,
             ReferenceSet=ReferenceSet('Hamming'),
+            repair=RepairKnapsack(),
             reference_set_size=10,
-            solution_pool_size=100,
-            diversity_threshold=probflip*2
+            solution_pool_size=100
         )
 
         ga_algorithm = GA(
             pop_size=100,
             sampling=BinaryRandomSampling(),
-            crossover=combination_method,
+            crossover=SinglePointCrossover(),
+            repair= RepairKnapsack(),
             mutation=BitflipMutation(prob_var=probflip),
             eliminate_duplicates=True)
 
         # Run Scatter Search
         start = time.time()
-        res_ss = minimize(problem, ss_algorithm, ('n_gen', n_gen), seed=seed, callback=DetailedCallback(), verbose=False)
+        res_ss = minimize(problem, ss_algorithm, ("n_eval", n_gen*100), seed=seed, callback=DetailedCallback(), verbose=False)
         ss_times.append(time.time() - start)
         all_ss_fitness.append(res_ss.algorithm.callback.data["best"])
-        all_ss_diversity.append(res_ss.algorithm.callback.data["diversity"])
         all_ss_added.append(res_ss.algorithm.callback.data["added"])
         all_ss_evals.append(res_ss.algorithm.callback.data["n_evals"])
         
@@ -149,62 +168,84 @@ def run_experiment(problem,n_runs=5,seeds=None):
         res_ga = minimize(problem, ga_algorithm, ('n_gen', n_gen), seed=seed, callback=DetailedCallback(), verbose=False)
         ga_times.append(time.time() - start)
         all_ga_fitness.append(res_ga.algorithm.callback.data["best"])
-        all_ga_diversity.append(res_ga.algorithm.callback.data["diversity"])
-        all_ga_added.append([0] * len(res_ga.algorithm.callback.data["best"]))
 
 
     
-    # ARREGLO CLAVE: Quitar el primer elemento [1:] para evitar el "punto cero"
-    ss_f_mean = np.mean(all_ss_fitness, axis=0)[1:]
-    ss_f_std = np.std(all_ss_fitness, axis=0)[1:]
-    ga_f_mean = np.mean(all_ga_fitness, axis=0)[1:]
-    ga_f_std = np.std(all_ga_fitness, axis=0)[1:]
-    
-    ss_d_mean = np.mean(all_ss_diversity, axis=0)[1:]
-    ss_d_std = np.std(all_ss_diversity, axis=0)[1:]
-    ga_d_mean = np.mean(all_ga_diversity, axis=0)[1:]
-    ga_d_std = np.std(all_ga_diversity, axis=0)[1:]
-    
-    ss_a_mean = np.mean(all_ss_added, axis=0)[1:]
-    ss_a_std = np.std(all_ss_added, axis=0)[1:]
+    # === INTERPOLACIÓN POR EVALUACIONES ===
+    max_evals = n_gen * 100
+    evals_grid = np.linspace(0, max_evals, 200)
 
-    ss_e_mean = np.mean(all_ss_evals, axis=0)
-    ss_e_std = np.std(all_ss_evals, axis=0)
-    ga_evals = 100 * np.arange(1, n_gen)
+    def interpolate_trial(evals, values, grid):
+        # np.interp expects purely increasing x-coordinates.
+        e = np.array(evals, dtype=float)
+        v = np.array(values, dtype=float)
+        
+        # Resolve duplicates by adding a tiny epsilon
+        for j in range(1, len(e)):
+            if e[j] <= e[j-1]:
+                e[j] = e[j-1] + 1e-6
+                
+        return np.interp(grid, e, v)
+
+    # Procesar SS
+    ss_f_interp = []
+    ss_a_interp = []
+
+    for i in range(n_runs):
+        e_ss = all_ss_evals[i]
+        # Pad with 0 at the start if needed
+        if e_ss[0] > 0:
+            e_ss = [0] + e_ss
+            f_ss = [all_ss_fitness[i][0]] + all_ss_fitness[i]
+            a_ss = [0] + all_ss_added[i]
+        else:
+            f_ss = all_ss_fitness[i]
+            a_ss = all_ss_added[i]
+            
+        ss_f_interp.append(interpolate_trial(e_ss, f_ss, evals_grid))
+        ss_a_interp.append(interpolate_trial(e_ss, a_ss, evals_grid))
+
+    ss_f_mean = np.mean(ss_f_interp, axis=0)
+    ss_f_std = np.std(ss_f_interp, axis=0) * 1.96 / np.sqrt(n_runs)
+    ss_a_mean = np.mean(ss_a_interp, axis=0)
+    ss_a_std = np.std(ss_a_interp, axis=0) * 1.96 / np.sqrt(n_runs)
+
+    # Procesar GA
+    ga_f_interp = []
+
+    for i in range(n_runs):
+        e_ga = np.arange(1, len(all_ga_fitness[i]) + 1) * 100
+        if e_ga[0] > 0:
+            e_ga = np.insert(e_ga, 0, 0)
+            f_ga = [all_ga_fitness[i][0]] + all_ga_fitness[i]
+        else:
+            f_ga = all_ga_fitness[i]
+            
+        ga_f_interp.append(interpolate_trial(e_ga, f_ga, evals_grid))
+
+    ga_f_mean = np.mean(ga_f_interp, axis=0)
+    ga_f_std = np.std(ga_f_interp, axis=0) * 1.96 / np.sqrt(n_runs)
 
     # Visualization
     plt.style.use('seaborn-v0_8-darkgrid')
-    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 16))
-    
-    # Nuevo eje X ajustado (empezando en generación 1)
-    gens = np.arange(1, n_gen)
+    fig, (ax1, ax3) = plt.subplots(2, 1, figsize=(12, 12))
     
     # 1. Convergence Plot
-    # Calbiar la std a intervalo de confianza del 95%
-    ss_f_std = ss_f_std * 1.96 / np.sqrt(n_runs)
-    ga_f_std = ga_f_std * 1.96 / np.sqrt(n_runs)
-    ax1.plot(gens, ss_f_mean, label=f'Scatter Search (Avg Time: {np.mean(ss_times):.2f}s)', color='#636EFA', linewidth=2)
-    ax1.fill_between(gens, ss_f_mean - ss_f_std, ss_f_mean + ss_f_std, color='#636EFA', alpha=0.2)
-    ax1.plot(gens, ga_f_mean, label=f'Genetic Algorithm (Avg Time: {np.mean(ga_times):.2f}s)', color='#EF553B', linewidth=2)
-    ax1.fill_between(gens, ga_f_mean - ga_f_std, ga_f_mean + ga_f_std, color='#EF553B', alpha=0.2)
+    ax1.plot(evals_grid[16:], ss_f_mean[16:], label=f'Scatter Search (Avg Time: {np.mean(ss_times):.2f}s)', color='#636EFA', linewidth=2)
+    ax1.fill_between(evals_grid[16:], ss_f_mean[16:] - ss_f_std[16:], ss_f_mean[16:] + ss_f_std[16:], color='#636EFA', alpha=0.2)
+    ax1.plot(evals_grid[16:], ga_f_mean[16:], label=f'Genetic Algorithm (Avg Time: {np.mean(ga_times):.2f}s)', color='#EF553B', linewidth=2)
+    ax1.fill_between(evals_grid[16:], ga_f_mean[16:] - ga_f_std[16:], ga_f_mean[16:] + ga_f_std[16:], color='#EF553B', alpha=0.2)
     ax1.set_title(f"Convergence Comparison | N={N}, K={K}", fontsize=16, fontweight='bold')
+    ax1.set_xlabel("Evaluaciones de la Función Objetivo", fontsize=14)
     ax1.set_ylabel(r"Best Fitness (Mean)", fontsize=14)
     ax1.legend(fontsize=11)
 
-    # 2. Diversity Plot
-    ax2.plot(gens, ss_d_mean, label='Scatter Search Diversity', color='#636EFA', linestyle='--', linewidth=2)
-    ax2.fill_between(gens, ss_d_mean - ss_d_std, ss_d_mean + ss_d_std, color='#636EFA', alpha=0.1)
-    ax2.plot(gens, ga_d_mean, label='Genetic Algorithm Diversity', color='#EF553B', linestyle='--', linewidth=2)
-    ax2.fill_between(gens, ga_d_mean - ga_d_std, ga_d_mean + ga_d_std, color='#EF553B', alpha=0.1)
-    ax2.set_title("Population Diversity (Hamming Distance %)", fontsize=16, fontweight='bold')
-    ax2.set_ylabel("Diversity %", fontsize=14)
-    ax2.legend(fontsize=11)
 
     # 3. Additions Plot
-    ax3.plot(gens, ss_a_mean, label='New solutions added to RefSet', color='#00CC96', linewidth=2)
-    ax3.fill_between(gens, ss_a_mean - ss_a_std, ss_a_mean + ss_a_std, color='#00CC96', alpha=0.2)
+    ax3.plot(evals_grid, ss_a_mean, label='New solutions added to RefSet', color='#00CC96', linewidth=2)
+    ax3.fill_between(evals_grid, ss_a_mean - ss_a_std, ss_a_mean + ss_a_std, color='#00CC96', alpha=0.2)
     ax3.set_title("Scatter Search Dynamics: RefSet Replacement Rate", fontsize=16, fontweight='bold')
-    ax3.set_xlabel("Generation", fontsize=14)
+    ax3.set_xlabel("Evaluaciones de la Función Objetivo", fontsize=14)
     ax3.set_ylabel("Count (New Solutions)", fontsize=14)
     ax3.legend(fontsize=11)
 
@@ -217,30 +258,19 @@ def run_experiment(problem,n_runs=5,seeds=None):
     final_ga = [run[-1] for run in all_ga_fitness]
 
     plt.figure(figsize=(8,6))
-    plt.boxplot([final_ss, final_ga], labels=['Scatter Search', 'Genetic Algorithm'])
+    plt.boxplot([final_ss, final_ga], tick_labels=['Scatter Search', 'Genetic Algorithm'])
     plt.title("Distribución del Fitness Final")
     plt.ylabel("Fitness")
     plt.savefig("boxplot_fitness.png", dpi=120)
 
-    # Evaluations per generation
-    # Calbiar la std a intervalo de confianza del 95%
-    ss_e_std = ss_e_std * 1.96 / np.sqrt(n_runs)
-    gens = np.arange(1, n_gen+1)
-    ga_evals = 100 * gens
-
-    plt.figure(figsize=(8,6))
-    plt.plot(gens, ss_e_mean, label='Scatter Search Evaluations', color='#636EFA', linewidth=2)
-    plt.fill_between(gens, ss_e_mean - ss_e_std, ss_e_mean + ss_e_std, color='#636EFA', alpha=0.2)
-    plt.plot(gens, ga_evals, label='Genetic Algorithm Evaluations', color='#EF553B', linewidth=2)
-    plt.title("Evaluations per Generation")
-    plt.xlabel("Generation")
-    plt.ylabel("Evaluations")
-    plt.legend()
-    plt.savefig("evaluations_per_generation.png", dpi=120)
-
     # --- Cálculo de Estancamiento ---
     ss_stagnation = get_stagnation_stats(all_ss_fitness, all_ss_evals)
     ga_stagnation = get_stagnation_stats(all_ga_fitness, pop_size=100)
+
+    # Calcular Evals totales mean/std real para SS
+    ss_e_totales = [run[-1] for run in all_ss_evals]
+    ss_e_mean_final = np.mean(ss_e_totales)
+    ss_e_std_final = np.std(ss_e_totales)
 
     print("\n" + "="*30)
     print("MÉTRICAS DE ESTANCAMIENTO")
@@ -250,7 +280,8 @@ def run_experiment(problem,n_runs=5,seeds=None):
     print(f"  - Evals promedio de estancamiento: {ss_stagnation['mean_evals']:.2f} ± {ss_stagnation['std_evals']:.2f}")
     print(f"  - Mejor fitness alcanzado: {min(final_ss):.4f}")
     print(f"  - Peor fitness alcanzado: {max(final_ss):.4f}")
-    print(f"  - Evals totales: {ss_e_mean[-1]:.2f} ± {ss_e_std[-1]:.2f}")
+    print(f"  - Media fitness alcanzado: {np.mean(final_ss):.4f} ± {np.std(final_ss):.4f}")
+    print(f"  - Evals totales: {ss_e_mean_final:.2f} ± {ss_e_std_final:.2f}")
     print(f"  - Tiempo total: {np.mean(ss_times):.2f} ± {np.std(ss_times):.2f}")
     
     print(f"\nGenetic Algorithm:")
@@ -258,28 +289,22 @@ def run_experiment(problem,n_runs=5,seeds=None):
     print(f"  - Evals promedio de estancamiento: {ga_stagnation['mean_evals']:.2f} ± {ga_stagnation['std_evals']:.2f}")
     print(f"  - Mejor fitness alcanzado: {min(final_ga):.4f}")
     print(f"  - Peor fitness alcanzado: {max(final_ga):.4f}")
+    print(f"  - Media fitness alcanzado: {np.mean(final_ga):.4f} ± {np.std(final_ga):.4f}")
     print(f"  - Tiempo total: {np.mean(ga_times):.2f} ± {np.std(ga_times):.2f}")
     print("="*30)
 
 
 if __name__ == "__main__":
-    # Configuration
-    N, K = 100, 6
-    n_gen = 80
-    problem = NKLandscape(N=N, K=K)
+    # Configuration from config.json or defaults
+    N = config.get("problem", "nk_landscape", "N", default=100)
+    K = config.get("problem", "nk_landscape", "K", default=6)
+    n_gen = config.get("algorithm", "n_gen", default=100)
+    n_runs = config.get("experiment", "n_runs", default=30)
+    seed = config.get("problem", "seed", default=42)
 
+   
 
-    #QUBO
-    np.random.seed(42)
-    Q = np.random.randint(-5, 10, size=(N, N))
-    Q = (Q + Q.T) // 2
-    #Turn odd index values into -10
-    #for i in range(N):
-    #    for j in range(i+1,N):
-    #        if i % 2 == 0:
-    #            Q[i, j] = -10
-    #            Q[j, i] = -10
-    problem2 = QUBO(Q)
+    problem= create_random_knapsack_problem(N,seed=seed)
+    print(np.mean(problem.C),np.std(problem.C))
 
-    #run_experiment(problem,n_runs=30)
-    run_experiment(problem2,n_runs=30)
+    run_experiment(problem, n_runs=n_runs)

@@ -1,0 +1,27 @@
+{
+    "problem": {
+        "type": "QUBO",
+        "n": 200,
+        "seed": 42,
+        "qubo_matrix": {
+            "min_val": -4,
+            "max_val": 8,
+            "diagonal_val": -10
+        },
+        "nk_landscape": {
+            "N": 200,
+            "K": 6
+        }
+    },
+    "algorithm": {
+        "reference_set_size": 10,
+        "solution_pool_size": 100,
+        "n_gen": 50,
+        "seed": 42,
+        "diversity_threshold_factor": 0
+    },
+    "experiment": {
+        "n_runs": 30,
+        "output_dir": "Graficas"
+    }
+}

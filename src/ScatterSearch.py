@@ -42,7 +42,7 @@ class ScatterSearchOutput(Output):
 
 class ScatterSearch(Algorithm):
     def __init__(self, subset_generation_method, combination_method, diversification_method, initial_improvement_method, improvement_method, ReferenceSet,
-                 reference_set_size=10, solution_pool_size=100, diversity_threshold=0.0, stagnation_limit=15, **kwargs):
+                 reference_set_size=10, solution_pool_size=100, diversity_threshold=0.0, stagnation_limit=3, **kwargs):
         # Set our custom display before calling super().__init__ so pymoo picks it up
         kwargs.setdefault("output", ScatterSearchOutput())
         super().__init__(**kwargs)
@@ -113,6 +113,7 @@ class ScatterSearch(Algorithm):
     
     def _stagnation_check(self):
         if self.n_added == 0:
+            
             self._restart()
 
     def _restart(self):

@@ -1,0 +1,117 @@
+[
+  {
+    "subset": "BinaryTournament",
+    "refset": "RefSet_16",
+    "repair": "RepairKnapsack",
+    "neighborhood": "MultipleBitActivate",
+    "ls_type": "BestImprov",
+    "problem": "Knapsack",
+    "mean": -3539.7,
+    "std": 2.7946377224964243,
+    "min": -3544.0,
+    "trials": [
+      -3539.0,
+      -3542.0,
+      -3540.0,
+      -3534.0,
+      -3540.0,
+      -3542.0,
+      -3539.0,
+      -3536.0,
+      -3541.0,
+      -3544.0
+    ]
+  },
+  {
+    "subset": "BinaryTournament",
+    "refset": "RefSet_8",
+    "repair": "RepairKnapsack",
+    "neighborhood": "MultipleBitActivate",
+    "ls_type": "BestImprov",
+    "problem": "Knapsack",
+    "mean": -3539.2,
+    "std": 3.2186953878862163,
+    "min": -3544.0,
+    "trials": [
+      -3544.0,
+      -3536.0,
+      -3536.0,
+      -3534.0,
+      -3544.0,
+      -3540.0,
+      -3540.0,
+      -3541.0,
+      -3540.0,
+      -3537.0
+    ]
+  },
+  {
+    "subset": "BinaryTournament",
+    "refset": "RefSet_16",
+    "repair": "RepairKnapsack",
+    "neighborhood": "SingleBitActivate",
+    "ls_type": "BestImprov",
+    "problem": "Knapsack",
+    "mean": -3537.6,
+    "std": 3.7735924528226414,
+    "min": -3544.0,
+    "trials": [
+      -3537.0,
+      -3544.0,
+      -3536.0,
+      -3534.0,
+      -3535.0,
+      -3540.0,
+      -3537.0,
+      -3532.0,
+      -3544.0,
+      -3537.0
+    ]
+  },
+  {
+    "subset": "BinaryTournament",
+    "refset": "RefSet_8",
+    "repair": "RepairKnapsack",
+    "neighborhood": "MultipleBitActivate",
+    "ls_type": "FirstImprov",
+    "problem": "Knapsack",
+    "mean": -3537.1,
+    "std": 4.2296571965113205,
+    "min": -3542.0,
+    "trials": [
+      -3534.0,
+      -3537.0,
+      -3540.0,
+      -3534.0,
+      -3527.0,
+      -3542.0,
+      -3540.0,
+      -3537.0,
+      -3540.0,
+      -3540.0
+    ]
+  },
+  {
+    "subset": "BinaryTournament",
+    "refset": "RefSet_16",
+    "repair": "RepairKnapsack",
+    "neighborhood": "MultipleBitActivate",
+    "ls_type": "FirstImprov",
+    "problem": "Knapsack",
+    "mean": -3537.0,
+    "std": 2.569046515733026,
+    "min": -3540.0,
+    "trials": [
+      -3536.0,
+      -3540.0,
+      -3536.0,
+      -3534.0,
+      -3534.0,
+      -3534.0,
+      -3536.0,
+      -3540.0,
+      -3540.0,
+      -3540.0
+    ]
+  }
+]
